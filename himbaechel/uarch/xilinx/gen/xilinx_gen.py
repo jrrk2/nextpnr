@@ -507,6 +507,17 @@ def import_bram_timings(timing, sdf):
                 if entry.to_pin == "DOBDOU": import_bus_clkq(bram36, "DOBDO", 32, "CLKARDCLK" if rsdp else "CLKBWRCLK", entry)
                 if entry.to_pin == "DOPBDOPU": import_bus_clkq(bram36, "DOPBDOP", 4, "CLKARDCLK" if rsdp else "CLKBWRCLK", entry)
 
+def with_family(root, old, new):
+    """root with its final directory switched from family old to new.
+
+    Only the last path component is a family directory; the same name
+    anywhere above it (a checkout under ~/virtex7-work/, say) is the
+    user's and must survive.  A root not ending in old is returned as is.
+    """
+    head, tail = path.split(root.rstrip("/"))
+    return path.join(head, new) if tail == old else root
+
+
 def main():
     xlbase = path.join(path.dirname(path.realpath(__file__)), "..")
 
@@ -518,21 +529,16 @@ def main():
     parser.add_argument("--bba", help="bba file to write", type=str, required=True)
     args = parser.parse_args()
 
-    # Init database paths
+    # Init database paths.  Both roots end in a family directory; switch that
+    # directory, not every occurrence of the family name in the path -- a
+    # checkout under e.g. ~/artix7-work/ would otherwise be rewritten too.
     metadata_root = args.metadata
     xraydb_root = args.xray
-    if "xc7z" in args.device:
-        metadata_root = metadata_root.replace("artix7", "zynq7")
-        xraydb_root = xraydb_root.replace("artix7", "zynq7")
-    if "xc7k" in args.device:
-        metadata_root = metadata_root.replace("artix7", "kintex7")
-        xraydb_root = xraydb_root.replace("artix7", "kintex7")
-    if "xc7s" in args.device:
-        metadata_root = metadata_root.replace("artix7", "spartan7")
-        xraydb_root = xraydb_root.replace("artix7", "spartan7")
-    if "xc7v" in args.device:
-        metadata_root = metadata_root.replace("artix7", "virtex7")
-        xraydb_root = xraydb_root.replace("artix7", "virtex7")
+    for prefix, family in (("xc7z", "zynq7"), ("xc7k", "kintex7"),
+                           ("xc7s", "spartan7"), ("xc7v", "virtex7")):
+        if prefix in args.device:
+            metadata_root = with_family(metadata_root, "artix7", family)
+            xraydb_root = with_family(xraydb_root, "artix7", family)
     # segbits_*.db / ppips_*.db live alongside the tile_type_*.json we import
     global xraydb_root_for_bits
     xraydb_root_for_bits = xraydb_root
@@ -620,10 +626,8 @@ def main():
 
     # Load SDF for carry and mux
     timings_root = xraydb_root
-    if "kintex7" in xraydb_root: # TODO: missing
-        timings_root = xraydb_root.replace("kintex7", "artix7")
-    if "virtex7" in xraydb_root: # TODO: missing
-        timings_root = xraydb_root.replace("virtex7", "artix7")
+    for family in ("kintex7", "virtex7"):   # TODO: missing
+        timings_root = with_family(timings_root, family, "artix7")
     slicem_sdf = parse_sdf.parse_sdf_file(path.join(timings_root, "timings", "slicem.sdf"))
     mux = ch.timing.add_cell_variant("DEFAULT", "SELMUX2_1")
     import_sdf_timings(mux, slicem_sdf.cells[("SELMUX2_1", "SLICEM/F7BMUX")])
