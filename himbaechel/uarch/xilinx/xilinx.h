@@ -164,6 +164,8 @@ struct XilinxImpl : HimbaechelAPI
     void apply_loc_constraints();
     void prePlace() override;
     void preRoute() override;
+    void apply_prerouted();
+    void apply_preplaced();
     void postPlace() override;
     void postRoute() override;
     void write_fasm(const std::string &filename);
