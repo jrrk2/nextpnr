@@ -431,9 +431,15 @@ void XilinxImpl::fixup_hold()
                 WireId sink_wire = ctx->getNetinfoSinkWire(net, pr, 0);
                 if (detour_arc(ctx, net, sink_wire, t.extra)) {
                     detoured++;
+                    if (getenv("HOLDFIX_VERBOSE"))
+                        log_info("Hold-fix: detour %s -> %s.%s (+%.3f ns)\n", ctx->nameOf(net), ctx->nameOf(sink),
+                                 t.sink_port.c_str(ctx), ctx->getDelayNS(t.extra));
                     continue;
                 }
             }
+            if (getenv("HOLDFIX_VERBOSE"))
+                log_info("Hold-fix: feedthrough %s -> %s.%s (+%.3f ns)\n", ctx->nameOf(net), ctx->nameOf(sink),
+                         t.sink_port.c_str(ctx), ctx->getDelayNS(t.extra));
             ft.push_back(t);
         }
 

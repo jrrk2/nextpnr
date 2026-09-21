@@ -2455,8 +2455,15 @@ struct FasmBackend
         // wrong; it inverts RST and holds the block in reset.
         write_bit("ZINV_PWRDWN", bool_or_default(ci->params, id_IS_PWRDWN_INVERTED, false));
         write_bit("ZINV_RST", bool_or_default(ci->params, id_IS_RST_INVERTED, false));
-        write_bit("ZINV_PSEN", bool_or_default(ci->params, id_IS_PSEN_INVERTED, false));
-        write_bit("ZINV_PSINCDEC", bool_or_default(ci->params, id_IS_PSINCDEC_INVERTED, false));
+        // Not the RST/PWRDWN convention.  Vivado's bitstream for a design that
+        // inverts nothing has ZINV_RST clear and ZINV_PSEN / ZINV_PSINCDEC
+        // SET: for these two the name means what it says, the bit set is
+        // "not inverted".  Written the other way, a PSEN the design ties low
+        // reads as high and the MMCM steps its phase continuously -- on the
+        // GTX's receive clock, that was frames sent perfectly and never one
+        // received.
+        write_bit("ZINV_PSEN", !bool_or_default(ci->params, id_IS_PSEN_INVERTED, false));
+        write_bit("ZINV_PSINCDEC", !bool_or_default(ci->params, id_IS_PSINCDEC_INVERTED, false));
         write_bit("INV_CLKINSEL", bool_or_default(ci->params, id_IS_CLKINSEL_INVERTED, false));
         write_mmcm_clkout("DIVCLK", ci);
         write_mmcm_clkout("CLKFBOUT", ci);
