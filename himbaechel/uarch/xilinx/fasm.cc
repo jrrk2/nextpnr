@@ -2314,8 +2314,32 @@ struct FasmBackend
         }
 
         int width = this_width;
-        if (width == 0)
+        if (width == 0) {
+            // A port the design never uses.  Vivado writes this port's width
+            // marker anyway, at the memory's width: the markers configure the
+            // width mux, not one port's intentions, and a half left without
+            // them reads back the wrong bits on the port that IS used.  The
+            // shape this bites is the ordinary two-port RAM -- written
+            // through A, read through B, so WRITE_WIDTH_B is 0 -- and a ROM,
+            // which never writes at all.  Comparing a small design's FASM
+            // against Vivado's shows the difference at every width: Vivado
+            // emits all four markers, this used to emit only the two the
+            // design mentions.
+            int other_half = 0;
+            for (const char *other : {"READ_WIDTH_A", "READ_WIDTH_B", "WRITE_WIDTH_A", "WRITE_WIDTH_B"}) {
+                int w = int_or_default(ci->params, ctx->id(other), 0);
+                if (w == 0)
+                    continue;
+                other_half = is_36 ? (w == 1 ? 1 : w / 2) : w;
+                break;
+            }
+            // Width 36 on a half is the SDP mode, spelled with SDP_*_36 and
+            // written by the used port's own path above; there is no
+            // WRITE_WIDTH_A_36 feature to write here.
+            if (other_half && other_half != 36)
+                write_bit(name + "_" + std::to_string(other_half));
             return;
+        }
         int actual_width = width;
         if (is_36) {
             if (width == 1)
@@ -2521,11 +2545,25 @@ struct FasmBackend
             // each half at 4 plus the same bit (prjxray's 027-bram36-config).
             // Without it the halves act as two independent memories and a
             // read returns the wrong bits.
+            // A port the design never uses has width 0 and would, taken on
+            // its own, leave its bit clear -- but the bit is the TILE's mode,
+            // not that port's, and Vivado sets all four on every x1 RAMB36.
+            // A memory read through port B while only port A is written (the
+            // shape a two-port RAM inferred from Verilog usually has) then
+            // came out configured inconsistently, and read the wrong bits.
             bool is_ramb36 = ci != nullptr && ci->type == id_RAMB36E1_RAMB36E1;
             if (is_ramb36) {
-                for (const char *width : {"READ_WIDTH_A", "READ_WIDTH_B", "WRITE_WIDTH_A", "WRITE_WIDTH_B"}) {
+                static const char *kWidths[] = {"READ_WIDTH_A", "READ_WIDTH_B", "WRITE_WIDTH_A",
+                                                "WRITE_WIDTH_B"};
+                bool tile_is_narrow = false;
+                for (const char *width : kWidths) {
                     int bits = int_or_default(ci->params, ctx->id(width), 0);
-                    bool odd_width = bits == 1 || bits == 9;
+                    if (bits == 1 || bits == 9)
+                        tile_is_narrow = true;
+                }
+                for (const char *width : kWidths) {
+                    int bits = int_or_default(ci->params, ctx->id(width), 0);
+                    bool odd_width = bits == 1 || bits == 9 || (bits == 0 && tile_is_narrow);
                     write_bit(std::string("RAMB36.BRAM36_") + width + "_1", odd_width);
                 }
                 // The LOWER block of a cascaded pair is the one that drives
@@ -2999,11 +3037,20 @@ struct FasmBackend
         // A pin tied inside the tile gets its logical value from the tieoff
         // (see below), so its inverter stays off.  That is what Vivado writes:
         // it refuses a tieoff behind an active inverter (DRC PDCN-6).
+        // Written as one vector, every bit stated, as Vivado writes it:
+        //   ZIS_INMODE_INVERTED[4:0] = 5'b11111
+        // Writing only the bits that happen to be set leaves the rest to
+        // whatever the frame already holds, and these are inverted-sense
+        // bits -- an unwritten ZIS_*_INVERTED means the line IS inverted,
+        // which silently changes what the DSP computes.  Stating the whole
+        // vector also makes a FASM comparison against Vivado meaningful.
         auto write_bus_zinv = [&](std::string name, int width) {
+            std::vector<bool> zinv(width);
             for (int i = 0; i < width; i++) {
                 const bool tied_in_tile = tile_tied_pin_names.count(name + std::to_string(i));
-                write_bit(stringf("ZIS_%s_INVERTED[%d]", name.c_str(), i), tied_in_tile || !pin_inverted(name, i));
+                zinv[i] = tied_in_tile || !pin_inverted(name, i);
             }
+            write_vector(stringf("ZIS_%s_INVERTED[%d:0]", name.c_str(), width - 1), zinv);
         };
 
         // value 1 is equivalent to 2, according to UG479
