@@ -465,6 +465,7 @@ class HeAPPlacer
     void place_constraints()
     {
         size_t placed_cells = 0;
+        std::vector<BelId> constrained;
         // Initial constraints placer
         for (auto &cell_entry : ctx->cells) {
             CellInfo *cell = cell_entry.second.get();
@@ -487,19 +488,56 @@ class HeAPPlacer
                               loc_name.c_str(), bel_type.c_str(ctx), cell->name.c_str(ctx), cell->type.c_str(ctx));
                 }
                 auto bound_cell = ctx->getBoundBelCell(bel);
+                if (bound_cell == cell) {
+                    // packing put it there already (a clock buffer on its
+                    // dedicated route, say); the constraint just agrees
+                    constrained.push_back(bel);
+                    placed_cells++;
+                    continue;
+                }
                 if (bound_cell) {
                     log_error("Cell \'%s\' cannot be bound to bel \'%s\' since it is already bound to cell \'%s\'\n",
                               cell->name.c_str(ctx), loc_name.c_str(), bound_cell->name.c_str(ctx));
                 }
 
                 ctx->bindBel(bel, cell, STRENGTH_USER);
-                if (!ctx->isBelLocationValid(bel, /* explain_invalid */ true)) {
-                    IdString bel_type = ctx->getBelType(bel);
-                    log_error("Bel \'%s\' of type \'%s\' is not valid for cell "
-                              "\'%s\' of type \'%s\'\n",
-                              loc_name.c_str(), bel_type.c_str(ctx), cell->name.c_str(ctx), cell->type.c_str(ctx));
-                }
+                constrained.push_back(bel);
                 placed_cells++;
+            }
+        }
+        // A constrained cluster root carries its unconstrained members with
+        // it (the packer's own cells in a pinned cluster: a constant LUT
+        // beside a pinned mux, say), at the cluster's own offsets.
+        for (BelId bel : std::vector<BelId>(constrained)) {
+            CellInfo *root = ctx->getBoundBelCell(bel);
+            if (root->cluster == ClusterId() || ctx->getClusterRootCell(root->cluster) != root)
+                continue;
+            std::vector<std::pair<CellInfo *, BelId>> placement;
+            if (!ctx->getClusterPlacement(root->cluster, bel, placement))
+                continue;
+            for (auto &pb : placement) {
+                if (pb.first->bel != BelId())
+                    continue;
+                if (ctx->getBoundBelCell(pb.second) != nullptr)
+                    log_error("cluster member '%s' of pinned '%s' needs bel '%s', which '%s' holds\n",
+                              pb.first->name.c_str(ctx), root->name.c_str(ctx), ctx->nameOfBel(pb.second),
+                              ctx->getBoundBelCell(pb.second)->name.c_str(ctx));
+                ctx->bindBel(pb.second, pb.first, STRENGTH_USER);
+                constrained.push_back(pb.second);
+                placed_cells++;
+            }
+        }
+        // A bel's validity depends on what else is in its site (a LUT and
+        // its flip-flop, the flip-flops sharing a slice's control set), so a
+        // set of constraints -- a whole frozen placement -- is only judged
+        // once every member is bound.
+        for (BelId bel : constrained) {
+            if (!ctx->isBelLocationValid(bel, /* explain_invalid */ true)) {
+                CellInfo *cell = ctx->getBoundBelCell(bel);
+                IdString bel_type = ctx->getBelType(bel);
+                log_error("Bel \'%s\' of type \'%s\' is not valid for cell "
+                          "\'%s\' of type \'%s\'\n",
+                          ctx->nameOfBel(bel), bel_type.c_str(ctx), cell->name.c_str(ctx), cell->type.c_str(ctx));
             }
         }
         log_info("Placed %d cells based on constraints.\n", int(placed_cells));
