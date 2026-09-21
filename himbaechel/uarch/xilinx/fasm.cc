@@ -1981,8 +1981,32 @@ struct FasmBackend
         }
 
         int width = this_width;
-        if (width == 0)
+        if (width == 0) {
+            // A port the design never uses.  Vivado writes this port's width
+            // marker anyway, at the memory's width: the markers configure the
+            // width mux, not one port's intentions, and a half left without
+            // them reads back the wrong bits on the port that IS used.  The
+            // shape this bites is the ordinary two-port RAM -- written
+            // through A, read through B, so WRITE_WIDTH_B is 0 -- and a ROM,
+            // which never writes at all.  Comparing a small design's FASM
+            // against Vivado's shows the difference at every width: Vivado
+            // emits all four markers, this used to emit only the two the
+            // design mentions.
+            int other_half = 0;
+            for (const char *other : {"READ_WIDTH_A", "READ_WIDTH_B", "WRITE_WIDTH_A", "WRITE_WIDTH_B"}) {
+                int w = int_or_default(ci->params, ctx->id(other), 0);
+                if (w == 0)
+                    continue;
+                other_half = is_36 ? (w == 1 ? 1 : w / 2) : w;
+                break;
+            }
+            // Width 36 on a half is the SDP mode, spelled with SDP_*_36 and
+            // written by the used port's own path above; there is no
+            // WRITE_WIDTH_A_36 feature to write here.
+            if (other_half && other_half != 36)
+                write_bit(name + "_" + std::to_string(other_half));
             return;
+        }
         int actual_width = width;
         if (is_36) {
             if (width == 1)
@@ -2121,11 +2145,25 @@ struct FasmBackend
             // each half at 4 plus the same bit (prjxray's 027-bram36-config).
             // Without it the halves act as two independent memories and a
             // read returns the wrong bits.
+            // A port the design never uses has width 0 and would, taken on
+            // its own, leave its bit clear -- but the bit is the TILE's mode,
+            // not that port's, and Vivado sets all four on every x1 RAMB36.
+            // A memory read through port B while only port A is written (the
+            // shape a two-port RAM inferred from Verilog usually has) then
+            // came out configured inconsistently, and read the wrong bits.
             bool is_ramb36 = ci != nullptr && ci->type == id_RAMB36E1_RAMB36E1;
             if (is_ramb36) {
-                for (const char *width : {"READ_WIDTH_A", "READ_WIDTH_B", "WRITE_WIDTH_A", "WRITE_WIDTH_B"}) {
+                static const char *kWidths[] = {"READ_WIDTH_A", "READ_WIDTH_B", "WRITE_WIDTH_A",
+                                                "WRITE_WIDTH_B"};
+                bool tile_is_narrow = false;
+                for (const char *width : kWidths) {
                     int bits = int_or_default(ci->params, ctx->id(width), 0);
-                    bool odd_width = bits == 1 || bits == 9;
+                    if (bits == 1 || bits == 9)
+                        tile_is_narrow = true;
+                }
+                for (const char *width : kWidths) {
+                    int bits = int_or_default(ci->params, ctx->id(width), 0);
+                    bool odd_width = bits == 1 || bits == 9 || (bits == 0 && tile_is_narrow);
                     write_bit(std::string("RAMB36.BRAM36_") + width + "_1", odd_width);
                 }
             }
@@ -2479,13 +2517,22 @@ struct FasmBackend
         auto dsp = stringf("DSP_%d", xy.y);
         push(dsp);
 
+        // Written as one vector, every bit stated, as Vivado writes it:
+        //   ZIS_INMODE_INVERTED[4:0] = 5'b11111
+        // Writing only the bits that happen to be set leaves the rest to
+        // whatever the frame already holds, and these are inverted-sense
+        // bits -- an unwritten ZIS_*_INVERTED means the line IS inverted,
+        // which silently changes what the DSP computes.  Stating the whole
+        // vector also makes a FASM comparison against Vivado meaningful.
         auto write_bus_zinv = [&](std::string name, int width) {
+            std::vector<bool> zinv(width);
             for (int i = 0; i < width; i++) {
-                std::string b = stringf("[%d]", i);
                 bool inv = (int_or_default(ci->params, ctx->id("IS_" + name + "_INVERTED"), 0) >> i) & 0x1;
-                inv |= bool_or_default(ci->params, ctx->id("IS_" + name + b + "_INVERTED"), false);
-                write_bit("ZIS_" + name + "_INVERTED" + b, !inv);
+                inv |= bool_or_default(ci->params, ctx->id("IS_" + name + stringf("[%d]", i) + "_INVERTED"),
+                                      false);
+                zinv[i] = !inv;
             }
+            write_vector(stringf("ZIS_%s_INVERTED[%d:0]", name.c_str(), width - 1), zinv);
         };
 
         // value 1 is equivalent to 2, according to UG479
@@ -2540,11 +2587,13 @@ struct FasmBackend
         // The most significant two bits seem to be zero, so let us just truncate them
         const size_t mask_size = 48;
         std::vector<bool> mask_vector(mask_size, true);
-        bool mask_found = boolvec_populate(ci->params, ctx->id("MASK"), mask_vector);
-        if (mask_found) {
-            mask_vector.resize(46);
-            write_vector("MASK[45:0]", mask_vector);
-        }
+        // The primitive's default MASK is all ones, and Vivado writes it out
+        // even when the netlist does not mention it -- yosys never does.
+        // Leaving it unwritten is a zero mask, which is a different pattern
+        // detector.
+        boolvec_populate(ci->params, ctx->id("MASK"), mask_vector);
+        mask_vector.resize(46);
+        write_vector("MASK[45:0]", mask_vector);
 
         auto sel_mask = str_or_default(ci->params, ctx->id("SEL_MASK"), "MASK");
         if (sel_mask == "C")
@@ -2556,8 +2605,16 @@ struct FasmBackend
 
         write_bit("ZADREG[0]", !bool_or_default(ci->params, ctx->id("ADREG"), true));
         write_bit("ZALUMODEREG[0]", !bool_or_default(ci->params, ctx->id("ALUMODEREG")));
-        write_bit("ZAREG_2_ACASCREG_1", !bool_or_default(ci->params, ctx->id("ACASCREG")));
-        write_bit("ZBREG_2_BCASCREG_1", !bool_or_default(ci->params, ctx->id("BCASCREG")));
+        // The feature is "AREG == 2 and ACASCREG == 1", inverted: a memory
+        // with AREG=1 (yosys's) is not that, so the bit is set -- which is
+        // what Vivado writes.  Testing ACASCREG alone got the common case
+        // backwards and left the register configuration to chance.
+        int areg_p = int_or_default(ci->params, ctx->id("AREG"), 1);
+        int breg_p = int_or_default(ci->params, ctx->id("BREG"), 1);
+        write_bit("ZAREG_2_ACASCREG_1",
+                  !(areg_p == 2 && int_or_default(ci->params, ctx->id("ACASCREG"), 1) == 1));
+        write_bit("ZBREG_2_BCASCREG_1",
+                  !(breg_p == 2 && int_or_default(ci->params, ctx->id("BCASCREG"), 1) == 1));
         write_bit("ZCARRYINREG[0]", !bool_or_default(ci->params, ctx->id("CARRYINREG")));
         write_bit("ZCARRYINSELREG[0]", !bool_or_default(ci->params, ctx->id("CARRYINSELREG")));
         write_bit("ZCREG[0]", !bool_or_default(ci->params, ctx->id("CREG"), true));
