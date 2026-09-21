@@ -4910,6 +4910,9 @@ void XilinxImpl::write_placement(const std::string &filename)
              << "\"tile\": \"" << escape(tile_name(ci->bel.tile)) << "\", "
              << "\"site\": \"" << escape(site_str) << "\", "
              << "\"bel\": \"" << escape(bel_name_in_site(ci->bel).str(ctx)) << "\", "
+             // nextpnr's own name for the bel: what a BEL attribute on the cell
+             // must say to put it back there (a frozen placement)
+             << "\"nextpnr_bel\": \"" << escape(ctx->nameOfBel(ci->bel)) << "\", "
              << "\"type\": \"" << escape(ci->type.str(ctx)) << "\"}";
     };
     for (auto &cell : ctx->cells) {
