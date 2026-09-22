@@ -855,6 +855,15 @@ struct FasmBackend
                 // Write LUT initialisation
                 if (lut6 != nullptr || lut5 != nullptr) {
                     std::string lutname = stringf("%cLUT", "ABCD"[i]);
+                    // A route-through on the same position would be a second
+                    // INIT for one LUT; the assembler ORs them and both the
+                    // cell and the routed net come out wrong (the VC707
+                    // processor's DMA->MAC advance, corrupted by a hold-fix
+                    // detour through a 5LUT's position, lost frames).
+                    if (lut_route_throughs.count(std::make_pair(tile, half * 4 + i)))
+                        log_error("%s.%s.%s holds cell '%s' and a route-through: two INITs for one LUT.\n",
+                                  tname.c_str(), get_half_name(half, is_mtile).c_str(), lutname.c_str(),
+                                  ctx->nameOf(lut6 != nullptr ? lut6 : lut5));
                     push(lutname);
                     write_vector("INIT[63:0]", get_lut_init(lut6, lut5));
 

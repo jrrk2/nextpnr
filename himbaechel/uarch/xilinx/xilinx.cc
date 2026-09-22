@@ -982,21 +982,12 @@ void XilinxImpl::apply_prerouted()
         }
         NetInfo *ni = it->second.get();
         if (!ni->wires.empty()) {
-            // route_clocks got here first.  If it reached every sink the
-            // clock stays as routed; if it gave up part way (an MMCM output
-            // that only reaches its BUFG through the fabric), its partial
-            // binding goes and the reference route takes over.
-            bool complete = true;
-            for (auto &usr : ni->users)
-                for (WireId sw : ctx->getNetinfoSinkWires(ni, usr))
-                    if (!ni->wires.count(sw))
-                        complete = false;
-            if (complete) {
-                log_info("Pre-routed: net '%s' is already routed (%zu wires), left as is\n", net_id.c_str(ctx),
-                         ni->wires.size());
-                continue;
-            }
-            log_info("Pre-routed: net '%s' was only partly routed (%zu wires); using the reference route\n",
+            // route_clocks got here first.  The reference's tree replaces
+            // its work even when it reached every sink: a clock with a sink
+            // added since (a probe) would otherwise get a fresh tree, and
+            // the arrival at every reference leaf with it.  The router adds
+            // the new leaves to the locked tree.
+            log_info("Pre-routed: net '%s' was routed already (%zu wires); the reference route replaces it\n",
                      net_id.c_str(ctx), ni->wires.size());
             std::vector<WireId> ws;
             for (auto &w : ni->wires)
