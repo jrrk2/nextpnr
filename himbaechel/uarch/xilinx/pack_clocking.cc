@@ -97,7 +97,15 @@ void XilinxPacker::preplace_unique(CellInfo *cell)
 {
     if (cell->attrs.count(id_BEL) || cell->bel != BelId())
         return;
+    // a site another cell of this type is pinned to (BEL attribute, not yet
+    // bound) is not available either
+    pool<BelId> claimed;
+    for (auto &other : ctx->cells)
+        if (other.second->type == cell->type && other.second->attrs.count(id_BEL))
+            claimed.insert(ctx->getBelByNameStr(other.second->attrs.at(id_BEL).as_string()));
     for (auto bel : ctx->getBels()) {
+        if (claimed.count(bel))
+            continue;
         if (ctx->checkBelAvail(bel) && ctx->getBelType(bel) == cell->type) {
             ctx->bindBel(bel, cell, STRENGTH_LOCKED);
             return;

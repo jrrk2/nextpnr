@@ -567,6 +567,18 @@ bool XilinxImpl::xc7_logic_tile_valid(IdString tile_type, const LogicTileStatus 
 
 bool XilinxImpl::isBelLocationValid(BelId bel, bool explain_invalid) const
 {
+    if (!frozen_tiles.empty() && frozen_tiles.count(bel.tile)) {
+        auto unpinned = [&](CellInfo *ci) { return ci != nullptr && !ci->attrs.count(id_BEL); };
+        if (is_logic_tile(bel) && tile_status.at(bel.tile).lts) {
+            for (CellInfo *ci : tile_status.at(bel.tile).lts->cells)
+                if (unpinned(ci))
+                    return false;
+        } else if (is_bram_tile(bel) && tile_status.at(bel.tile).bts) {
+            for (CellInfo *ci : tile_status.at(bel.tile).bts->cells)
+                if (unpinned(ci))
+                    return false;
+        }
+    }
     if (is_logic_tile(bel)) {
         if (!tile_status.at(bel.tile).lts)
             return true;

@@ -71,6 +71,10 @@ struct Router2
         WireId src_wire;
         dict<WireId, std::pair<PipId, int>> wires;
         std::vector<std::vector<PerArcData>> arcs;
+        // an arc of this net once needed the unbounded search: the source's
+        // exit lies outside the box (a BSCAN, whose pins leave the CFG_CENTER
+        // tile far from where it sits), so the box only wastes the other arcs' time
+        bool bb_useless = false;
         dict<GroupId, NetResourceData> resources;
         BoundingBox bb;
         // Coordinates of the center of the net, used for the weight-to-average
@@ -232,10 +236,15 @@ struct Router2
                     auto &nd = nets.at(bound->udata);
                     nd.wires[wire] = std::make_pair(bound->wires.at(wire).pip, 0);
                     pwd.curr_cong = 1;
-                    if (bound->wires.at(wire).strength == STRENGTH_PLACER) {
+                    if (bound->wires.at(wire).strength >= STRENGTH_PLACER) {
+                        // Reserved for its net: no other net may enter, and the
+                        // net itself may only use it through its bound pip
+                        // (checked on expansion), but the net's remaining sinks
+                        // can branch off it -- a locked tree (a pre-routed net,
+                        // a routed clock) would otherwise be a dead end for a
+                        // sink added since, whose only way out of the source is
+                        // through a locked wire.
                         pwd.reserved_net = bound->udata;
-                    } else if (bound->wires.at(wire).strength > STRENGTH_PLACER) {
-                        pwd.unavailable = true;
                     }
                 }
             }
@@ -944,6 +953,10 @@ struct Router2
                                 : (!t.fwd_queue.empty() || !t.bwd_queue.empty())) &&
                    ((!is_bb && midpoint_wire == -1) || iter < toexplore)) {
                 ++iter;
+                if ((iter % 5000000) == 0)
+                    log_warning("route_arc: net %s, %s -> %s: %d iterations (fwd %zu, bwd %zu, bb %d)\n", ctx->nameOf(net),
+                                ctx->nameOfWire(src_wire), ctx->nameOfWire(dst_wire), iter, t.fwd_queue.size(),
+                                t.bwd_queue.size(), int(is_bb));
                 if (!t.fwd_queue.empty() && !const_mode) {
                     // Explore forwards
                     auto curr = t.fwd_queue.top();
@@ -1215,7 +1228,7 @@ struct Router2
                              return get_arc_crit(net, a.first) > get_arc_crit(net, b.first);
                          });
         for (auto a : t.route_arcs) {
-            auto res1 = route_arc(t, net, a.first, a.second, is_mt, true);
+            auto res1 = (nd.bb_useless && !is_mt) ? ARC_RETRY_WITHOUT_BB : route_arc(t, net, a.first, a.second, is_mt, true);
             if (res1 == ARC_FATAL)
                 return false; // Arc failed irrecoverably
             else if (res1 == ARC_RETRY_WITHOUT_BB) {
@@ -1227,6 +1240,8 @@ struct Router2
                     ROUTE_LOG_DBG("Rerouting arc %d.%d of net '%s' without bounding box, possible tricky routing...\n",
                                   a.first.idx(), int(a.second), ctx->nameOf(net));
                     auto res2 = route_arc(t, net, a.first, a.second, is_mt, false);
+                    if (res2 == ARC_SUCCESS)
+                        nd.bb_useless = true;
                     // If this also fails, no choice but to give up
                     if (res2 != ARC_SUCCESS) {
                         if (ctx->debug) {

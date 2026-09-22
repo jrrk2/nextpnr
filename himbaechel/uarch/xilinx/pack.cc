@@ -126,9 +126,14 @@ void XilinxPacker::generic_xform(const dict<IdString, XFormRule> &rules, bool pr
 
 CellInfo *XilinxPacker::feed_through_lut(NetInfo *net, const std::vector<PortRef> &feed_users)
 {
-    NetInfo *feedthru_net = ctx->createNet(ctx->idf("%s$legal%d", net->name.c_str(ctx), ++autoidx));
-
-    CellInfo *lut = create_lut(stringf("%s$LUT%d", net->name.c_str(ctx), ++autoidx), {net}, feedthru_net, Property(2));
+    // Named after the pin fed, not a counter, so the name is the same in a
+    // build of the same netlist with cells added (-o preplaced pins by name)
+    const PortRef &first = feed_users.front();
+    NetInfo *feedthru_net = ctx->createNet(ctx->idf("%s$legal$%s$%s", net->name.c_str(ctx), first.cell->name.c_str(ctx),
+                                                    first.port.c_str(ctx)));
+    CellInfo *lut = create_lut(stringf("%s$LUT$%s$%s", net->name.c_str(ctx), first.cell->name.c_str(ctx),
+                                       first.port.c_str(ctx)),
+                               {net}, feedthru_net, Property(2));
 
     for (auto &usr : feed_users) {
         usr.cell->disconnectPort(usr.port);
@@ -140,8 +145,11 @@ CellInfo *XilinxPacker::feed_through_lut(NetInfo *net, const std::vector<PortRef
 
 CellInfo *XilinxPacker::feed_through_muxf(NetInfo *net, IdString type, const std::vector<PortRef> &feed_users)
 {
-    NetInfo *feedthru_net = ctx->createNet(ctx->idf("%s$legal$%d", net->name.c_str(ctx), ++autoidx));
-    CellInfo *mux = create_cell(type, ctx->idf("%s$MUX$%d", net->name.c_str(ctx), ++autoidx));
+    const PortRef &first = feed_users.front();
+    NetInfo *feedthru_net = ctx->createNet(ctx->idf("%s$legal$%s$%s", net->name.c_str(ctx), first.cell->name.c_str(ctx),
+                                                    first.port.c_str(ctx)));
+    CellInfo *mux = create_cell(type, ctx->idf("%s$MUX$%s$%s", net->name.c_str(ctx), first.cell->name.c_str(ctx),
+                                               first.port.c_str(ctx)));
     mux->connectPort(id_I0, net);
     mux->connectPort(id_O, feedthru_net);
     mux->connectPort(id_S, ctx->nets[ctx->id("$PACKER_GND_NET")].get());
@@ -294,8 +302,8 @@ void XilinxPacker::pack_lutffs()
         if (ci->type != id_SLICE_FFX)
             continue;
         NetInfo *d = ci->getPort(id_D);
-        if (d->driver.cell == nullptr)
-            continue;
+        if (d == nullptr || d->driver.cell == nullptr)
+            continue; // an undriven D (yosys's 'x') is not a pairing
         if (d->driver.cell->type == id_SLICE_LUTX && d->driver.port == id_O6) {
             CellInfo *lut = d->driver.cell;
             if (lut->cluster != ClusterId() || !lut->constr_children.empty()) {
@@ -1124,6 +1132,10 @@ void XilinxImpl::pack()
     if (args.options.count("xdc")) {
         parse_xdc(args.options["xdc"].as<std::string>());
     }
+    // The reference placement first for the cells that exist before packing
+    // (prePlace pins the packer's own afterwards), so the packer's single-site
+    // primitives leave a pinned cell's site alone.
+    apply_preplaced(false);
 
     XC7Packer packer(ctx, this);
     packer.pack_constants();
