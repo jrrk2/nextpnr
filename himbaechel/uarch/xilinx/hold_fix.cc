@@ -153,7 +153,11 @@ static bool detour_arc(Context *ctx, NetInfo *net, WireId sink_wire, delay_t ext
             continue;
         for (PipId up : ctx->getPipsUphill(e.w)) {
             WireId s = ctx->getPipSrcWire(up);
-            bool candidate_wire = usable(s) && in_box(s);
+            // The pip must be available too, not just the wire: a LUT
+            // route-through pip is only usable while its LUT bel is free,
+            // and a detour through an occupied LUT writes a second INIT
+            // over the cell's (the FASM then carries both).
+            bool candidate_wire = usable(s) && in_box(s) && ctx->checkPipAvailForNet(up, net);
             if (!candidate_wire)
                 continue;
             delay_t nd = e.d + ctx->getPipDelay(up).maxDelay();
@@ -199,7 +203,7 @@ static bool detour_arc(Context *ctx, NetInfo *net, WireId sink_wire, delay_t ext
         delay_t best_score = std::numeric_limits<delay_t>::min();
         for (PipId dh : ctx->getPipsDownhill(cur)) {
             WireId n = ctx->getPipDstWire(dh);
-            bool can_extend_path = !used.count(n) && distT.count(n) && usable(n);
+            bool can_extend_path = !used.count(n) && distT.count(n) && usable(n) && ctx->checkPipAvailForNet(dh, net);
             if (!can_extend_path)
                 continue;
             delay_t total = acc + ctx->getPipDelay(dh).maxDelay() + distT.at(n);
@@ -238,7 +242,7 @@ static bool detour_arc(Context *ctx, NetInfo *net, WireId sink_wire, delay_t ext
     std::vector<PipId> bound;
     for (PipId p : path) {
         WireId d = ctx->getPipDstWire(p);
-        bool wire_taken_since_search = ctx->getBoundWireNet(d) != nullptr;
+        bool wire_taken_since_search = ctx->getBoundWireNet(d) != nullptr || !ctx->checkPipAvailForNet(p, net);
         if (wire_taken_since_search) {
             for (int i = int(bound.size()) - 1; i >= 0; i--)
                 ctx->unbindPip(bound[i]);

@@ -1190,6 +1190,25 @@ void XC7Packer::pack_cfg()
             if (!chain_in_range)
                 log_error("Instance '%s': Invalid JTAG_CHAIN number of '%d'. Allowed values are: 1-4.\n",
                           ci->name.c_str(ctx), chain);
+            // USER<n> is served by site BSCAN_X0Y<n-1>: the chain number
+            // decides the site, so a BSCAN with the wrong site answers the
+            // wrong user register (its TDI, SEL, CAPTURE... are another
+            // chain's).  Pin it there unless the design already did.
+            if (!ci->attrs.count(id_BEL) && ci->bel == BelId()) {
+                std::string want = stringf("BSCAN_X0Y%d.BSCAN", chain - 1);
+                for (BelId bel : ctx->getBels()) {
+                    if (ctx->getBelType(bel) != id_BSCAN)
+                        continue;
+                    std::string name = ctx->nameOfBel(bel);
+                    if (name.size() >= want.size() && name.compare(name.size() - want.size(), want.size(), want) == 0) {
+                        if (!ctx->checkBelAvail(bel))
+                            log_error("Instance '%s': site %s for JTAG_CHAIN %d is taken by '%s'.\n",
+                                      ci->name.c_str(ctx), name.c_str(), chain, ctx->nameOf(ctx->getBoundBelCell(bel)));
+                        ctx->bindBel(bel, ci, STRENGTH_LOCKED);
+                        break;
+                    }
+                }
+            }
         }
         // These configuration primitives each live in a single dedicated
         // site; the placer cannot discover that site on its own, so without
