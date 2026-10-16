@@ -27,6 +27,7 @@
 #include "util.h"
 
 #include "placer_heap.h"
+#include "timing_opt.h"
 #include "placer_static.h"
 #include "router2.h"
 
@@ -91,6 +92,9 @@ po::options_description XilinxImpl::getUArchOptions()
     specific.add_options()("holdbufs", po::value<std::string>(),
                            "before placing, re-create the reference build's hold-fix feedthrough buffers listed in "
                            "this file (scripts/routing_dump.py), so -o preplaced / -o prerouted replay them too");
+    specific.add_options()("timing-opt", po::value<std::string>(),
+                           "after placing, the timing-driven placement optimisation on the critical paths: R[,N] moves a "
+                           "cell up to R tiles, N rounds (default 30); off unless given");
     specific.add_options()("hold-detour-max", po::value<double>(),
                            "hold deficit (ns) up to which a routing detour is used instead of a feedthrough LUT "
                            "(default 0.5)");
@@ -904,6 +908,22 @@ void XilinxImpl::prePlace()
 
 void XilinxImpl::postPlace()
 {
+    // "-o timing-opt=R[,N]": the timing-driven placement optimisation of common/place/timing_opt.cc (upstream; the iCE40 flow
+    // runs it behind --opt-timing) on the LUTs and flops of the critical paths, moving a cell up to R tiles, N rounds (default
+    // 30), with the measured delay matrix giving its estimates.  Off unless asked for, until it is measured on xc7
+    // (docs/physopt-pass-proposal.md in the tools repository).
+    if (ctx->args.options.count("timing-opt")) {
+        std::string v = ctx->args.options.at("timing-opt").as<std::string>();
+        TimingOptCfg cfg(ctx);
+        cfg.cellTypes.insert(id_SLICE_LUTX);
+        cfg.cellTypes.insert(id_SLICE_FFX);
+        cfg.radius = std::max(1, std::atoi(v.c_str()));
+        auto comma = v.find(',');
+        if (comma != std::string::npos)
+            cfg.iterations = std::max(1, std::atoi(v.c_str() + comma + 1));
+        log_info("timing-opt: radius %d tiles, %d rounds\n", cfg.radius, cfg.iterations);
+        timing_opt(ctx, cfg);
+    }
     fixup_placement();
     ctx->assignArchInfo();
 }
