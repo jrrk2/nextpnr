@@ -222,6 +222,8 @@ struct XilinxImpl : HimbaechelAPI
     int hclk_for_ioi(int tile) const;
 
     std::string tile_name(int tile) const;
+    // The die whose chipdb is loaded (xc7a35t is "xc7a50t", and so on)
+    std::string chipdb_die;
 
     std::vector<XilinxCellTags> cell_tags;
     const XilinxCellTags *get_tags(const CellInfo *cell) const
@@ -262,6 +264,12 @@ struct XilinxImpl : HimbaechelAPI
     void save_delay_matrix(const std::string &path) const;
 
     // The global clock tree's insertion delay; see clock_tree.cc
+    struct ClockTreeRates
+    {
+        const char *die;
+        delay_t ps_per_region_row, ps_per_10_columns, bram_clock_pin_ps, flat_route_ps;
+    };
+    ClockTreeRates ct_rates{};
     bool ct_enabled = false;
     int ct_spine_x = -1;
     float ct_centre_y = 0;

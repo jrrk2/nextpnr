@@ -93,7 +93,8 @@ po::options_description XilinxImpl::getUArchOptions()
                            "before placing, re-create the reference build's hold-fix feedthrough buffers listed in "
                            "this file (scripts/routing_dump.py), so -o preplaced / -o prerouted replay them too");
     specific.add_options()("clock-tree", po::value<std::string>(),
-                           "global clock insertion delay model, on (default) or off; see clock_tree.cc");
+                           "global clock insertion delay model: on (default; dies with measured clock delays only), "
+                           "off, or force (an uncalibrated die takes the xc7vx485t's); see clock_tree.cc");
     specific.add_options()("bram-place", po::value<std::string>(),
                            "place block RAMs by read-mux group and the rest again around them, on (default) or off; see "
                            "bram_place.cc");
@@ -154,6 +155,7 @@ void XilinxImpl::init_database(Arch *arch)
     const bool xc7s75_uses_xc7s100 = die == "xc7s75";
     if (xc7s75_uses_xc7s100)
         die = "xc7s100";
+    chipdb_die = die;
     arch->load_chipdb(stringf("xilinx/chipdb-%s.bin", die.c_str()));
     std::string package = match[2].str();
     // A bare die name carries no package, and set_package("") is not the

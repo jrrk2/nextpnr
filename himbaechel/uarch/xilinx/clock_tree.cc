@@ -32,9 +32,12 @@
 // The model adds that delay to each sink of a BUFGCTRL-driven net, routed or
 // not, and turns on clock-skew analysis for every timing analyser, so the
 // placer and router see it as well as the final report.  The region rows and
-// the spine come from the chipdb's CLK_HROW and CLK_BUFG tiles, so it holds
-// for any 7-series die; the rates are the xc7vx485t's.  "-o clock-tree=off"
-// returns to the flat delay.
+// the spine come from the chipdb's CLK_HROW and CLK_BUFG tiles, but the rates
+// are measured per die, and a die without a measurement keeps the flat delay:
+// another part's rates would be no better than none, and would move timing
+// in either direction.  "-o clock-tree=off" keeps the flat delay everywhere;
+// "-o clock-tree=force" uses the xc7vx485t's rates on an uncalibrated die,
+// for measuring one.
 
 #include "log.h"
 #include "nextpnr.h"
@@ -46,13 +49,13 @@
 NEXTPNR_NAMESPACE_BEGIN
 
 namespace {
-// Vivado's clock delays on an xc7vx485t-2 (destination clock delay of
-// flip-flops and block RAMs in every clock region, from a placed design)
-const delay_t ct_ps_per_region_row = 170;
-const delay_t ct_ps_per_10_columns = 17;
-const delay_t ct_bram_clock_pin_ps = 430;
-// The routed delay of every global clock sink, for unrouted estimates
-const delay_t ct_flat_route_ps = 762;
+// Per die: Vivado's clock delays (the destination clock delay of flip-flops
+// and block RAMs in every clock region of a placed design), and the routed
+// delay nextpnr gives every global clock sink, for unrouted estimates
+const XilinxImpl::ClockTreeRates clock_tree_rates[] = {
+        // xc7vx485t-2, a VexRiscv LiteX SoC placed by Vivado 2020.1
+        {"xc7vx485t", 170, 17, 430, 762},
+};
 } // namespace
 
 void XilinxImpl::init_clock_tree()
@@ -61,6 +64,20 @@ void XilinxImpl::init_clock_tree()
             ctx->args.options.count("clock-tree") ? ctx->args.options.at("clock-tree").as<std::string>() : "on";
     if (mode == "off")
         return;
+    const ClockTreeRates *rates = nullptr;
+    for (const auto &r : clock_tree_rates)
+        if (chipdb_die == r.die)
+            rates = &r;
+    if (rates == nullptr && mode != "force") {
+        log_info("clock-tree: no clock delays measured for %s, global clocks keep their routed delay\n",
+                 chipdb_die.c_str());
+        return;
+    }
+    if (rates == nullptr) {
+        rates = &clock_tree_rates[0];
+        log_warning("clock-tree: no clock delays measured for %s, using %s's\n", chipdb_die.c_str(), rates->die);
+    }
+    ct_rates = *rates;
     std::vector<int> bufg_rows;
     for (int tile = 0; tile < ctx->chip_info->tile_insts.ssize(); tile++) {
         const std::string prefix = IdString(tile_extra_data(tile)->name_prefix).str(ctx);
@@ -93,8 +110,8 @@ void XilinxImpl::init_clock_tree()
     }
     ct_enabled = true;
     ctx->settings[ctx->id("timing/clockSkew")] = Property(1, 1);
-    log_info("clock-tree: %d clock region rows, spine at x=%d, BUFGs at y=%.1f\n", int(ct_region_rows.size()),
-             ct_spine_x, ct_centre_y);
+    log_info("clock-tree: %s, %d clock region rows, spine at x=%d, BUFGs at y=%.1f\n", ct_rates.die,
+             int(ct_region_rows.size()), ct_spine_x, ct_centre_y);
 }
 
 bool XilinxImpl::is_global_clock_bel(BelId bel) const
@@ -121,9 +138,9 @@ delay_t XilinxImpl::clock_tree_delay_at(int x, int y, bool bram_clock_pin) const
         if (between)
             rows_away++;
     }
-    delay_t delay = ct_ps_per_region_row * rows_away + ct_ps_per_10_columns * std::abs(x - ct_spine_x) / 10;
+    delay_t delay = ct_rates.ps_per_region_row * rows_away + ct_rates.ps_per_10_columns * std::abs(x - ct_spine_x) / 10;
     if (bram_clock_pin)
-        delay += ct_bram_clock_pin_ps;
+        delay += ct_rates.bram_clock_pin_ps;
     return delay;
 }
 
@@ -144,7 +161,11 @@ bool XilinxImpl::getArcDelayOverride(const NetInfo *net_info, const PortRef &sin
     const bool driven_by_a_bufg = driver != nullptr && is_global_clock_bel(driver->bel);
     if (!driven_by_a_bufg || sink.cell == nullptr)
         return false;
-    // The routed delay, summed as Context::getNetinfoRouteDelayQuad does
+    // Each of the port's sink wires as Context::getNetinfoRouteDelayQuad
+    // takes it -- the routed delay where it is routed, the prediction where
+    // not -- with the insertion delay on top; the prediction (predictDelay,
+    // for a BUFG source) carries the insertion delay already
+    const delay_t insertion = clock_tree_delay(sink.cell->bel);
     WireId src_wire = ctx->getNetinfoSourceWire(net_info);
     if (src_wire == WireId())
         return false;
@@ -161,15 +182,20 @@ bool XilinxImpl::getArcDelayOverride(const NetInfo *net_info, const PortRef &sin
             cursor = ctx->getPipSrcWire(it->second.pip);
         }
         const bool arc_is_routed = cursor == src_wire;
-        if (!arc_is_routed)
-            return false;
-        d = d + ctx->getWireDelay(src_wire);
-        result = DelayQuad(std::min(result.minDelay(), d.minDelay()), std::max(result.maxDelay(), d.maxDelay()));
+        if (arc_is_routed)
+            d = d + ctx->getWireDelay(src_wire) + DelayQuad(insertion);
+        else
+            d = DelayQuad(ctx->predictArcDelay(net_info, sink));
+        // rise and fall kept apart, as Context::getNetinfoRouteDelayQuad does
+        result.rise.min_delay = std::min(result.rise.min_delay, d.rise.min_delay);
+        result.rise.max_delay = std::max(result.rise.max_delay, d.rise.max_delay);
+        result.fall.min_delay = std::min(result.fall.min_delay, d.fall.min_delay);
+        result.fall.max_delay = std::max(result.fall.max_delay, d.fall.max_delay);
         found = true;
     }
     if (!found)
         return false;
-    delay = result + DelayQuad(clock_tree_delay(sink.cell->bel));
+    delay = result;
     return true;
 }
 
@@ -177,7 +203,7 @@ delay_t XilinxImpl::predict_clock_tree_delay(BelId src_bel, BelId dst_bel) const
 {
     if (!ct_enabled || !is_global_clock_bel(src_bel))
         return -1;
-    return ct_flat_route_ps + clock_tree_delay(dst_bel);
+    return ct_rates.flat_route_ps + clock_tree_delay(dst_bel);
 }
 
 NEXTPNR_NAMESPACE_END
