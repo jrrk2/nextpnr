@@ -1585,6 +1585,22 @@ struct FasmBackend
                     // direction owns the slew choice.
                     if (!is_output)
                         write_bit("LVCMOS12_LVCMOS15_LVCMOS18.SLEW.SLOW");
+                } else if (is_liob18) {
+                    // The left-hand HP receiver, from a reference bitstream (an
+                    // IBUFDS LVDS on the VC707 USER_CLOCK pins, LIOB18_X81Y79):
+                    // the P half alone is set, with the same IN_DIFF bits as the
+                    // right-hand side.  The database's LIOB18 LVDS.IN_DIFF key
+                    // clears one of them (!38_126), so the SSTL key is the one
+                    // that matches; nothing on the N half.
+                    if (yLoc == 0) {
+                        write_bit("SSTL12_SSTL135_SSTL15.IN_DIFF");
+                        if (!is_output)
+                            write_bit("IBUF_HP_BANK_GLUE");
+                        std::string saved = fasm_ctx.back();
+                        fasm_ctx.back() = "DIFF";
+                        write_bit("ZIBUF_LOW_PWR");
+                        fasm_ctx.back() = saved;
+                    }
                 } else if (is_tmds33) {
                     // TMDS_33 has a receiver key of its own, defined on the P
                     // half only; the N half carries no IN_DIFF (a reference
