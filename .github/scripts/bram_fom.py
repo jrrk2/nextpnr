@@ -187,6 +187,9 @@ def main():
                 scores[b] = worst
         ranked = sorted(scores, key=scores.get, reverse=True)
         v = sorted(scores.values())
+        if not v:  # a design without block RAMs has nothing to score
+            print("%-22s no block RAMs" % name)
+            continue
         p = lambda q: v[min(len(v) - 1, int(q * len(v)))]
         over = sum(1 for s in v if s > a.budget)
         ranks = " ".join("%s:#%d" % (m.replace("rom_inst_", ""), ranked.index(m) + 1) for m in marks if m in scores)
