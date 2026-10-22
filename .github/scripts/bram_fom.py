@@ -24,7 +24,7 @@ A nextpnr placement is its -o placement=... JSON; a Vivado one is "cell site"
 lines (get_cells ... SITE).  --mark names block RAMs to report the rank of
 (ones known to fail, say).  --max-worst and --max-p95 make it a gate: exit 1
 if any placement scores over them."""
-import argparse, collections, json, re, statistics
+import argparse, collections, json, os, re, statistics
 
 
 def load_netlist(path):
@@ -94,6 +94,14 @@ class DelayMatrix:
         return self.at(ex, ey) + (abs(dx) - abs(ex)) * self.rx + (abs(dy) - abs(ey)) * self.ry
 
 
+class FormulaDelay:
+    """nextpnr's fallback when no delay matrix is measured (predictDelay)"""
+
+    def __call__(self, dx, dy):
+        x, y = abs(dx), abs(dy)
+        return 1.5 * (30 * min(x, 18) + 10 * max(x - 18, 0) + 60 * min(y, 6) + 20 * max(y - 6, 0) + 300)
+
+
 class ClockTree:
     def __init__(self, tilegrid):
         rows, bufg, self.spine = set(), [], None
@@ -136,7 +144,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--netlist", required=True)
     ap.add_argument("--tilegrid", required=True)
-    ap.add_argument("--delay-matrix", required=True)
+    ap.add_argument("--delay-matrix", required=True, help="nextpnr's -o delay-matrix file, or 'formula'")
     ap.add_argument("--budget", type=float, default=3000, help="score (ps) beyond which a block RAM counts as over")
     ap.add_argument("--mark", default="", help="comma-separated block RAMs to rank")
     ap.add_argument("--top", type=int, default=5)
@@ -149,7 +157,12 @@ def main():
     cones = read_cones(cells)
     tg = json.load(open(a.tilegrid))
     site_xy = {s: (t["grid_x"], t["grid_y"]) for t in tg.values() for s in t.get("sites", {})}
-    dm, ct = DelayMatrix(a.delay_matrix), ClockTree(tg)
+    # "formula" (or no file): nextpnr's fallback formula, whose scores are not
+    # comparable with a measured matrix's
+    use_formula = a.delay_matrix == "formula" or not os.path.isfile(a.delay_matrix)
+    dm, ct = (FormulaDelay() if use_formula else DelayMatrix(a.delay_matrix)), ClockTree(tg)
+    if use_formula:
+        print("delay model: nextpnr's formula (no delay matrix file)")
     marks = [m for m in a.mark.split(",") if m]
 
     failed = []

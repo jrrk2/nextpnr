@@ -55,14 +55,18 @@ matrix, plus the clock-tree skew).  On the board:
 |---|---|---|---|
 | Vivado | reads | 4908 ps | 4084 ps |
 | this tree (clock tree and block RAM placement) | reads, boots | 5048 ps | 4187 ps |
+| this tree, chipdb from another prjxray-db revision | reads | 5632 ps | 5083 ps |
 | Vivado's block RAM sites, nextpnr logic | reads, boots | 5663 ps | 5038 ps |
 | nextpnr, the netlist before the fix | reads, boots | 5995 ps | 4979 ps |
 | nextpnr before this work, seed 2 | reads wrongly | 6251 ps | 5113 ps |
 | nextpnr before this work | reads wrongly | 6961 ps | 5639 ps |
 
-The gate fails over 5600 ps worst or 4700 ps p95: between this tree's
-placement and the placements that read wrongly, with room for a different
-runner's placement.  The log must also show the `clock-tree:` and
+The worst score is what separates them: every placement that read its ROM
+scored 5995 ps or less, the two that did not 6251 and 6961.  The gate fails
+over 6100 ps worst, in that gap, or over 5400 ps p95, a backstop (the p95
+does not separate them alone: 5083 read, 5113 did not).  The margin is about
+250 ps either side, so the score flags a placement to try on the board rather
+than proving one.  The log must also show the `clock-tree:` and
 `bram-place:` lines, so a run where either was skipped cannot pass.
 
 About 13 minutes of P&R on a desktop.
