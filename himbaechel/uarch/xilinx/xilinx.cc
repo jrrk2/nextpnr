@@ -92,6 +92,11 @@ po::options_description XilinxImpl::getUArchOptions()
     specific.add_options()("holdbufs", po::value<std::string>(),
                            "before placing, re-create the reference build's hold-fix feedthrough buffers listed in "
                            "this file (scripts/routing_dump.py), so -o preplaced / -o prerouted replay them too");
+    specific.add_options()("clock-tree", po::value<std::string>(),
+                           "global clock insertion delay model, on (default) or off; see clock_tree.cc");
+    specific.add_options()("bram-place", po::value<std::string>(),
+                           "place block RAMs by read-mux group and the rest again around them, on (default) or off; see "
+                           "bram_place.cc");
     specific.add_options()("timing-opt", po::value<std::string>(),
                            "after placing, the timing-driven placement optimisation on the critical paths: R[,N] moves a "
                            "cell up to R tiles, N rounds (default 30); off unless given");
@@ -896,6 +901,7 @@ void XilinxImpl::prePlace()
         build_delay_matrix();
     }
     apply_loc_constraints();
+    init_clock_tree();
     assign_cell_tags();
     index_control_sets();
     cell_tags_set = true;
@@ -912,6 +918,7 @@ void XilinxImpl::postPlace()
     // runs it behind --opt-timing) on the LUTs and flops of the critical paths, moving a cell up to R tiles, N rounds (default
     // 30), with the measured delay matrix giving its estimates.  Off unless asked for, until it is measured on xc7
     // (docs/physopt-pass-proposal.md in the tools repository).
+    replace_around_brams();
     if (ctx->args.options.count("timing-opt")) {
         std::string v = ctx->args.options.at("timing-opt").as<std::string>();
         TimingOptCfg cfg(ctx);
@@ -1701,6 +1708,9 @@ delay_t XilinxImpl::predictDelay(BelId src_bel, IdString src_pin, BelId dst_bel,
     bool both_bels_known = src_bel != BelId() && dst_bel != BelId();
     if (!both_bels_known)
         return 0;
+    delay_t clock_tree = predict_clock_tree_delay(src_bel, dst_bel);
+    if (clock_tree >= 0)
+        return clock_tree;
     int sx, sy, dx, dy;
     tile_xy(ctx->chip_info, src_bel.tile, sx, sy);
     tile_xy(ctx->chip_info, dst_bel.tile, dx, dy);

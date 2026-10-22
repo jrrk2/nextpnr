@@ -261,6 +261,25 @@ struct XilinxImpl : HimbaechelAPI
     bool load_delay_matrix(const std::string &path);
     void save_delay_matrix(const std::string &path) const;
 
+    // The global clock tree's insertion delay; see clock_tree.cc
+    bool ct_enabled = false;
+    int ct_spine_x = -1;
+    float ct_centre_y = 0;
+    std::vector<int> ct_region_rows; // the centre (HROW) row of each clock region row
+    pool<IdString> ct_bufg_bel_types;
+    void init_clock_tree();
+    bool is_global_clock_bel(BelId bel) const;
+    delay_t clock_tree_delay_at(int x, int y, bool bram_clock_pin) const;
+    delay_t clock_tree_delay(BelId sink) const;
+    delay_t predict_clock_tree_delay(BelId src_bel, BelId dst_bel) const;
+    bool getArcDelayOverride(const NetInfo *net_info, const PortRef &sink, DelayQuad &delay) const override;
+
+    // Block RAMs placed by read-mux group, then everything else around them;
+    // see bram_place.cc
+    bool is_movable_bram(const CellInfo *ci) const;
+    bool place_brams_by_group();
+    void replace_around_brams();
+
     delay_t predictDelay(BelId src_bel, IdString src_pin, BelId dst_bel, IdString dst_pin) const override;
     delay_t estimateDelay(WireId src, WireId dst) const override;
     BoundingBox getRouteBoundingBox(WireId src, WireId dst) const override;

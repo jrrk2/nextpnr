@@ -101,6 +101,12 @@ struct HimbaechelAPI
     // --- Route lookahead ---
     virtual delay_t estimateDelay(WireId src, WireId dst) const;
     virtual delay_t predictDelay(BelId src_bel, IdString src_pin, BelId dst_bel, IdString dst_pin) const;
+    // A routed arc's delay in place of the sum of its wires and pips, for delay
+    // the routing graph does not carry (a clock tree's insertion delay, say)
+    virtual bool getArcDelayOverride(const NetInfo *net_info, const PortRef &sink, DelayQuad &delay) const
+    {
+        return false;
+    }
     virtual BoundingBox getRouteBoundingBox(WireId src, WireId dst) const;
 
     // Cell->bel pin mapping
