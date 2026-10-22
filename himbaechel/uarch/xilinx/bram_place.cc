@@ -34,7 +34,10 @@
 // regrow all the groups at once from their centroids -- one site per group
 // per round, the cheapest free site by estimated delay to the centroid plus
 // the clock tree's extra insertion delay there -- lock them, and place
-// everything else again around them.  "-o bram-place=off" skips it.
+// everything else again around them.  It runs by default on the dies whose
+// clock delays clock_tree.cc has measured, since its cost is calibrated
+// there; "-o bram-place=force" runs it on any die, "-o bram-place=off" skips
+// it.
 
 #include <queue>
 
@@ -90,6 +93,17 @@ bool XilinxImpl::place_brams_by_group()
             ctx->args.options.count("bram-place") ? ctx->args.options.at("bram-place").as<std::string>() : "on";
     if (mode == "off")
         return false;
+    // The cost of a site is its estimated delay plus the clock tree's extra
+    // insertion delay there, and the second placement pass costs run time and
+    // often Fmax; both are measured on the xc7vx485t only.  Elsewhere the skew
+    // term would be zero and the pass is untested, so it is left out unless
+    // forced, as the clock model is.
+    if (mode != "force" && !clock_rates_measured()) {
+        log_info("bram-place: no clock delays measured for %s, block RAMs keep the heap placement "
+                 "(-o bram-place=force to run it)\n",
+                 chipdb_die.c_str());
+        return false;
+    }
 
     std::vector<CellInfo *> brams;
     dict<IdString, int> index_of;

@@ -276,6 +276,7 @@ struct XilinxImpl : HimbaechelAPI
     std::vector<int> ct_region_rows; // the centre (HROW) row of each clock region row
     pool<IdString> ct_bufg_bel_types;
     void init_clock_tree();
+    bool clock_rates_measured() const;
     bool is_global_clock_bel(BelId bel) const;
     delay_t clock_tree_delay_at(int x, int y, bool bram_clock_pin) const;
     delay_t clock_tree_delay(BelId sink) const;

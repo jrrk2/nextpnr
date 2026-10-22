@@ -58,6 +58,14 @@ const XilinxImpl::ClockTreeRates clock_tree_rates[] = {
 };
 } // namespace
 
+bool XilinxImpl::clock_rates_measured() const
+{
+    for (const auto &r : clock_tree_rates)
+        if (chipdb_die == r.die)
+            return true;
+    return false;
+}
+
 void XilinxImpl::init_clock_tree()
 {
     std::string mode =
@@ -124,7 +132,14 @@ delay_t XilinxImpl::clock_tree_delay_at(int x, int y, bool bram_clock_pin) const
     if (!ct_enabled)
         return 0;
     // the sink's region is the one whose HROW row is nearest; its distance
-    // from the BUFGs is the number of region rows between them
+    // from the BUFGs is the number of region rows between them.  The BUFGs
+    // sit between two region rows, and those two share the base delay: the
+    // first step is the row beyond them.  Vivado on the xc7vx485t (the LiteX
+    // SoC's sys_clk, BUFGCTRL_X0Y16 between CLOCKREGION Y3 and Y4; the
+    // earliest block RAM clock pin of each row) gives Y0..Y6 = 1759, 1587,
+    // 1415, 1243 | 1230, 1390, 1550 ps -- equal either side of the BUFGs,
+    // then 160-172 ps a row.  Counting the sink's own row as well would add
+    // the same 170 ps to every sink, a constant and no skew.
     int region_row = ct_region_rows.front();
     for (int r : ct_region_rows)
         if (std::abs(r - y) < std::abs(region_row - y))

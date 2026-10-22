@@ -102,7 +102,9 @@ struct HimbaechelAPI
     virtual delay_t estimateDelay(WireId src, WireId dst) const;
     virtual delay_t predictDelay(BelId src_bel, IdString src_pin, BelId dst_bel, IdString dst_pin) const;
     // A routed arc's delay in place of the sum of its wires and pips, for delay
-    // the routing graph does not carry (a clock tree's insertion delay, say)
+    // the routing graph does not carry (a clock tree's insertion delay, say).
+    // The generic architecture API's hook of the same name (common/kernel/
+    // arch_api.h, docs/archapi.md), passed through to the uarch.
     virtual bool getArcDelayOverride(const NetInfo *net_info, const PortRef &sink, DelayQuad &delay) const
     {
         return false;

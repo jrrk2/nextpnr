@@ -1601,6 +1601,12 @@ struct FasmBackend
                         write_bit("ZIBUF_LOW_PWR");
                         fasm_ctx.back() = saved;
                     }
+                    // As on the right-hand side, and as Vivado's bitstream
+                    // decodes (both halves of LIOB18_X81Y79 for an input-only
+                    // IBUFDS).  The feature is all cleared bits in the
+                    // database, so the frames are the same either way.
+                    if (!is_output)
+                        write_bit("LVCMOS12_LVCMOS15_LVCMOS18.SLEW.SLOW");
                 } else if (is_tmds33) {
                     // TMDS_33 has a receiver key of its own, defined on the P
                     // half only; the N half carries no IN_DIFF (a reference

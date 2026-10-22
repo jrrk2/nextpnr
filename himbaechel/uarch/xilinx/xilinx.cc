@@ -96,8 +96,8 @@ po::options_description XilinxImpl::getUArchOptions()
                            "global clock insertion delay model: on (default; dies with measured clock delays only), "
                            "off, or force (an uncalibrated die takes the xc7vx485t's); see clock_tree.cc");
     specific.add_options()("bram-place", po::value<std::string>(),
-                           "place block RAMs by read-mux group and the rest again around them, on (default) or off; see "
-                           "bram_place.cc");
+                           "place block RAMs by read-mux group and the rest again around them: on (default; dies with "
+                           "measured clock delays only), off, or force (any die); see bram_place.cc");
     specific.add_options()("timing-opt", po::value<std::string>(),
                            "after placing, the timing-driven placement optimisation on the critical paths: R[,N] moves a "
                            "cell up to R tiles, N rounds (default 30); off unless given");
