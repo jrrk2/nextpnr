@@ -1549,12 +1549,17 @@ struct FasmBackend
                         write_bit("LVCMOS12_LVCMOS15_LVCMOS18.IN");
                     else if (is_output) {
                         // Both halves drive as well as receive -- SD cmd and
-                        // data.  Vivado sets the shared bit once, from IOB_Y1,
-                        // and gives IOB_Y0 the bank glue (LIOB18_X81Y10).
+                        // data.  IOB_Y1 sets its .IN and IOB_Y0 the bank glue
+                        // (LIOB18_X81Y10).  IOB_Y0 also needs its own .IN: the
+                        // VC707's BPI flash data pads (a Vivado bitstream,
+                        // LIOB18_X81Y83) set it, and without it those pads read
+                        // as constants -- the flash then looked silent.
                         if (yLoc == 1)
                             write_bit("LVCMOS12_LVCMOS15_LVCMOS18.IN");
-                        else
+                        else {
                             write_bit("IBUF_HP_BANK_GLUE");
+                            write_bit("LVCMOS12_LVCMOS15_LVCMOS18.IN");
+                        }
                     }
                     else {
                         // Two pure inputs.  Vivado sets each half's own .IN (bit2fasm of LIOB18_X81Y128,
