@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: [mistral, ice40, ecp5, generic, nexus, machxo2, himbaechel, rust]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       DEPS_PATH: ${{ github.workspace }}/deps

@@ -42,7 +42,7 @@ env:
 jobs:
   regression:
     name: xc7 FASM regression cases
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Check out this tree
