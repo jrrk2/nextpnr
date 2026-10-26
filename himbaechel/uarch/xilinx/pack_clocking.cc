@@ -614,6 +614,13 @@ void XilinxImpl::route_clocks()
         if (!is_global)
             continue;
 
+        // A buffer output with no loads must stay unbound: router1 treats any
+        // wire on a sinkless net as a stub, and nothing needs the source wire.
+        if (clk_net->users.empty()) {
+            log_info("    clock '%s' has no sinks; nothing to route\n", clk_net->name.c_str(ctx));
+            continue;
+        }
+
         log_info("    routing clock '%s'\n", clk_net->name.c_str(ctx));
         ctx->bindWire(ctx->getNetinfoSourceWire(clk_net), clk_net, STRENGTH_LOCKED);
 
