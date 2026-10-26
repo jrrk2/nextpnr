@@ -567,6 +567,9 @@ jobs:
           # with them it boots.  The only entry gated on placement quality:
           # bram_fom.py's score of its block RAMs, from the placement alone,
           # must stay with the placements that read their ROM on the board.
+          # Stretch, like every netlist entry, so a failing score turns this
+          # job red on the PR without blocking it: hours of P&R on a hosted
+          # runner cannot be a required check, and the red is the signal.
           # Its netlist is Verilator's, not yosys's, and its flags are the
           # board build's.  See its README.
           - name: vc707-litex-romlinux
@@ -946,8 +949,14 @@ jobs:
           EX: nextpnr/himbaechel/uarch/xilinx/examples/${{ matrix.design }}
         run: |
           set -o pipefail
-          for want in "clock-tree: " "bram-place: "; do
-            if ! grep -q "$want" pnr.log; then
+          # The lines each pass logs when it ran, not the prefixes: a model
+          # without rates for the die logs "clock-tree: no clock delays
+          # measured for ...", and the pass it gates "bram-place: no clock
+          # delays measured ...", and neither of those is the configuration
+          # the budget was measured under.
+          for want in "clock-tree: ${{ matrix.die }}, [0-9]+ clock region rows" \
+                      "bram-place: [0-9]+ block RAMs in [0-9]+ read-mux groups"; do
+            if ! grep -Eq "$want" pnr.log; then
               echo "::error::no '$want' line in the P&R log: the clock-tree model or the block RAM pass did not run"
               exit 1
             fi

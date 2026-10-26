@@ -66,7 +66,12 @@ scored 5995 ps or less, the two that did not 6251 and 6961.  The gate fails
 over 6100 ps worst, in that gap, or over 5400 ps p95, a backstop (the p95
 does not separate them alone: 5083 read, 5113 did not).  The margin is about
 250 ps either side, so the score flags a placement to try on the board rather
-than proving one.  The log must also show the `clock-tree:` and
-`bram-place:` lines, so a run where either was skipped cannot pass.
+than proving one.  The log must also show the clock-tree model's calibration
+line for the die and the block RAM pass's group summary, so a run where
+either was skipped cannot pass; a placement that omits a block RAM or a
+register of its read cone fails too, since an unscored path is not a passed
+one.  The entry is stretch tier: a failing score makes the job red on the
+pull request without blocking it, because hours of place and route on a
+hosted runner cannot be a required check.
 
 About 13 minutes of P&R on a desktop.

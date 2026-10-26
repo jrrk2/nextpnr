@@ -166,30 +166,45 @@ def main():
     marks = [m for m in a.mark.split(",") if m]
 
     failed = []
+    gate = a.max_worst is not None or a.max_p95 is not None
     print("%-22s %6s %6s %6s %6s %8s  %s" % ("placement", "worst", "p95", "p50", "over", "unplaced", "marked ranks"))
     for spec in a.placements:
         name, path = spec.split("=", 1)
         pl = load_placement(path, site_xy)
-        scores, missing = {}, 0
+        if not cones:  # a design without block RAMs has nothing to score
+            print("%-22s no block RAMs" % name)
+            continue
+        scores, missing_brams, missing_regs = {}, 0, 0
         for b, regs in cones.items():
             if b not in pl:
-                missing += 1
+                missing_brams += 1
                 continue
             bx, by = pl[b]
             worst = None
             for r in regs:
                 if r not in pl:
+                    missing_regs += 1
                     continue
                 rx, ry = pl[r]
                 s = dm(rx - bx, ry - by) + ct(bx, by, True) - ct(rx, ry, False)
                 worst = s if worst is None else max(worst, s)
             if worst is not None:
                 scores[b] = worst
+        missing = missing_brams + missing_regs
+        if not scores:
+            # Block RAMs in the netlist but nothing scored: the placement does
+            # not name them, so this is a mismatch, not a clean design.
+            print("%-22s %d block RAMs, none scored" % (name, len(cones)))
+            failed.append("%s: %d block RAMs and no scores; the placement does not name the netlist's cells"
+                          % (name, len(cones)))
+            continue
+        if gate and missing:
+            # A path the placement leaves out cannot be scored, and the worst
+            # path is the test, so an omission is a failure rather than a gap.
+            failed.append("%s: the placement omits %d block RAM(s) and %d register(s) of their read cones"
+                          % (name, missing_brams, missing_regs))
         ranked = sorted(scores, key=scores.get, reverse=True)
         v = sorted(scores.values())
-        if not v:  # a design without block RAMs has nothing to score
-            print("%-22s no block RAMs" % name)
-            continue
         p = lambda q: v[min(len(v) - 1, int(q * len(v)))]
         over = sum(1 for s in v if s > a.budget)
         ranks = " ".join("%s:#%d" % (m.replace("rom_inst_", ""), ranked.index(m) + 1) for m in marks if m in scores)

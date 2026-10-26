@@ -218,6 +218,11 @@ delay_t XilinxImpl::predict_clock_tree_delay(BelId src_bel, BelId dst_bel) const
 {
     if (!ct_enabled || !is_global_clock_bel(src_bel))
         return -1;
+    // The source's own site adds nothing: every BUFGCTRL of a 7-series die
+    // sits in the one CLK_BUFG column at the centre the rates were measured
+    // from (ct_centre_y is the mean of those rows), and the regional buffers
+    // (BUFH, BUFR, BUFIO) are not global clock bels, so their sinks keep the
+    // routed delay.
     return ct_rates.flat_route_ps + clock_tree_delay(dst_bel);
 }
 
