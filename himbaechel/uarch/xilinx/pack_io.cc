@@ -373,6 +373,24 @@ void XC7Packer::decompose_iob(CellInfo *xil_iob, bool is_hr, const std::string &
     }
 }
 
+// The fabric clock buffers an IBUFDS_GTE2 output can drive, through the
+// buffer's one wire to the fabric (MGTCLKOUT).  pack_io runs before
+// prepare_clocking(), so the users are still the primitives of the design:
+// BUFGCE, BUFGCTRL and the BUFGMUX family have not become BUFGCTRL yet.  The
+// BUFGMUX names have no constid, so the type is compared as a string, as
+// prepare_clocking() does; that interns no id.
+static const std::vector<std::string> ibufds_gte2_fabric_buffers{
+        "BUFG", "BUFGCE", "BUFGCTRL", "BUFGMUX", "BUFGMUX_1", "BUFGMUX_CTRL", "BUFH", "BUFHCE", "BUFR"};
+
+static bool is_ibufds_gte2_fabric_buffer(const Context *ctx, IdString type)
+{
+    const std::string &name = type.str(ctx);
+    return std::find(ibufds_gte2_fabric_buffers.begin(), ibufds_gte2_fabric_buffers.end(), name) !=
+           ibufds_gte2_fabric_buffers.end();
+}
+
+static std::string ibufds_gte2_fabric_buffer_list() { return boost::algorithm::join(ibufds_gte2_fabric_buffers, "/"); }
+
 void XC7Packer::pack_io()
 {
     log_info("Inserting IO buffers..\n");
@@ -465,21 +483,61 @@ void XC7Packer::pack_io()
                 log_error("IBUFDS_GTE2 pad %s is not constrained\n", pad_cell->name.c_str(ctx));
             constrain_ibufds_gt_site(buf_cell, pad_bel);
             NetInfo *net = buf_cell->getPort(id_O);
-            if (net == nullptr)
-                log_error("IBUFDS_GTE2 instance %s output port is not connected\n", buf_cell->name.c_str(ctx));
+            // ODIV2 is the reference clock divided by two.  The port name is
+            // taken from the cell, as in pack_clocking, so this does not intern
+            // a new id.
+            NetInfo *odiv2 = nullptr;
+            for (auto &port : buf_cell->ports) {
+                const bool port_is_odiv2 = port.first.str(ctx) == "ODIV2";
+                if (port_is_odiv2)
+                    odiv2 = port.second.net;
+            }
+            const bool no_output_connected = net == nullptr && odiv2 == nullptr;
+            if (no_output_connected)
+                log_error("IBUFDS_GTE2 instance %s has neither O nor ODIV2 connected\n", buf_cell->name.c_str(ctx));
             // Accepted silicon-legal consumers: GTPE2/GTXE2_COMMON (QPLL
             // clustering), GTXE2_CHANNEL direct (CPLL mode), or a fabric
-            // clock buffer (MGT REFCLK straight into BUFG/BUFH/BUFR).
+            // clock buffer (MGT REFCLK straight into one of
+            // ibufds_gte2_fabric_buffers).
             CellInfo *gt_common = nullptr;
             bool has_gtxe2_channel_direct = false, has_bufg_direct = false;
-            for (auto &usr : net->users) {
-                if (usr.cell->type.in(id_GTPE2_COMMON, id_GTXE2_COMMON))
-                    gt_common = usr.cell;
-else if (usr.cell->type.in(id_GTPE2_CHANNEL, id_GTXE2_CHANNEL))
-                    has_gtxe2_channel_direct = true;
-                else if (usr.cell->type.in(id_BUFG, id_BUFH, id_BUFHCE, id_BUFR))
-                    has_bufg_direct = true;
+            const bool o_connected = net != nullptr;
+            if (o_connected) {
+                for (auto &usr : net->users) {
+                    const bool is_gt_common = usr.cell->type.in(id_GTPE2_COMMON, id_GTXE2_COMMON);
+                    const bool is_gt_channel = usr.cell->type.in(id_GTPE2_CHANNEL, id_GTXE2_CHANNEL);
+                    const bool is_fabric_clock_buffer = is_ibufds_gte2_fabric_buffer(ctx, usr.cell->type);
+                    if (is_gt_common)
+                        gt_common = usr.cell;
+                    else if (is_gt_channel)
+                        has_gtxe2_channel_direct = true;
+                    else if (is_fabric_clock_buffer)
+                        has_bufg_direct = true;
+                }
             }
+            // ODIV2 has no path to a transceiver: its only pip in the GT
+            // common tile goes to the buffer's MGTCLKOUT wire, which leads to
+            // the fabric clock network.
+            bool odiv2_drives_fabric = false;
+            const bool odiv2_connected = odiv2 != nullptr;
+            if (odiv2_connected) {
+                for (auto &usr : odiv2->users) {
+                    const bool is_fabric_clock_buffer = is_ibufds_gte2_fabric_buffer(ctx, usr.cell->type);
+                    if (!is_fabric_clock_buffer)
+                        log_error("IBUFDS_GTE2 instance %s output ODIV2 can only drive a %s, not %s\n",
+                                  buf_cell->name.c_str(ctx), ibufds_gte2_fabric_buffer_list().c_str(),
+                                  usr.cell->type.c_str(ctx));
+                    odiv2_drives_fabric = true;
+                }
+            }
+            // O reaches the fabric through that same MGTCLKOUT wire, so only
+            // one of the two outputs can drive fabric clock buffers.  Vivado
+            // leaves the second net unrouted (Route 35-54).
+            const bool both_outputs_drive_fabric = has_bufg_direct && odiv2_drives_fabric;
+            if (both_outputs_drive_fabric)
+                log_error("IBUFDS_GTE2 instance %s drives fabric clock buffers from both O and ODIV2, but the "
+                          "buffer has a single wire to the fabric (MGTCLKOUT); use one of the two outputs\n",
+                          buf_cell->name.c_str(ctx));
             // The buffer is KEPT, not packed away.  constrain_ibufds_gt_site
             // has just bound it to a real IBUFDS_GTE2 site, and that site has
             // configuration of its own -- IN_USE, CLKCM_CFG, CLKRCV_TRST and
@@ -500,13 +558,15 @@ else if (usr.cell->type.in(id_GTPE2_CHANNEL, id_GTXE2_CHANNEL))
                         constrain_gt(pad_cell, usr.cell);
                 }
             }
-            bool drives_a_legal_consumer = has_gtxe2_channel_direct || has_bufg_direct;
+            // With O open, ODIV2 is the output in use and was checked above.
+            const bool drives_a_legal_consumer =
+                    has_gtxe2_channel_direct || has_bufg_direct || (!o_connected && odiv2_drives_fabric);
             if (drives_a_legal_consumer) {
                 continue;
             }
             log_error("IBUFDS_GTE2 instance %s output port must be connected to a GTPE2_COMMON, GTXE2_COMMON, "
-                      "GTXE2_CHANNEL, or BUFG/BUFH/BUFR\n",
-                      buf_cell->name.c_str(ctx));
+                      "GTXE2_CHANNEL, or %s\n",
+                      buf_cell->name.c_str(ctx), ibufds_gte2_fabric_buffer_list().c_str());
         }
 
         // This OBUF is integrated into the GTP/GTX channel pad and does not need placing

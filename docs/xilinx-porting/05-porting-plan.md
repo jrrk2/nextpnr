@@ -374,6 +374,7 @@ cases block, the outstanding ones run `continue-on-error` naming their issue.
 | ~~BUFH/BUFR/BUFIO/BUFMR + MMCM secondary-output clock propagation (`13d88882`)~~ | **ported** — `generate_constraints()` now carries a constraint through BUFGCTRL I0/I1, BUFHCE, BUFR (divided by `BUFR_DIVIDE`), BUFIO and BUFMRCE, and derives the MMCM's CLKOUT0B..3B and CLKFBOUT(B); case `bufh-clock-constraint` (BUFH is the routable representative; BUFR/BUFIO share the path but need the prjxray-db bump to route) |
 | ~~prjxray-db pin~~ | **bumped** — CI now pins `77e52f10` (was `ab1fc60c`); blast-radius checked: `bufio-in-use` newly routes; of the 14 blocking cases only `clock-srcc-bufg` (2 lines), `bufg-fabric-driven` (~15) and `srl-init` (5) shift, all benign routing/placement deltas from the HCLK_IOI3 routing-graph change (`I2IOCLK` DMUX ppips added, `RCLK2IO→CK_BUFRCLK` moved from always-on to segbits) |
 
-`dsp-const-only-pins` (#159) is **not** a blocker: it is red on the fork's main
-too, with the fix unmerged in the fork's PR #159.
+`dsp-const-only-pins` (#159) is a blocking case since #66, which ties the
+DSP48E1's constant-only inputs in the tile as Vivado writes them; the fork's
+PR #159 is still unmerged.
 

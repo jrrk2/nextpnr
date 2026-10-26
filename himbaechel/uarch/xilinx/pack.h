@@ -218,6 +218,10 @@ struct XC7Packer : public XilinxPacker
 
     // Clocking
     void bypass_pll_input_buffers();
+    // BUFG/BUFGCE conversions; raise_bufg_ignore1() runs after pack_constants()
+    std::vector<CellInfo *> bufgs_ignoring_i1;
+    void raise_bufg_ignore1();
+    void bufgmux_to_bufgctrl(CellInfo *ci);
     void prepare_clocking();
     void pack_plls();
     void pack_gbs();

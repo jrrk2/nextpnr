@@ -202,6 +202,64 @@ void XC7Packer::bypass_pll_input_buffers()
                  removed);
 }
 
+// Vivado ties IGNORE1 of a BUFG or BUFGCE high: the unused I1 is never
+// waited for. pack_constants() has tied it low, to VCC through the site
+// inverter; clearing the inverter here, instead of tying the pin in
+// prepare_clocking(), keeps the users of the VCC net in their order, and with
+// them the routing of every design.
+void XC7Packer::raise_bufg_ignore1()
+{
+    for (CellInfo *ci : bufgs_ignoring_i1)
+        ci->params[id_IS_IGNORE1_INVERTED] = Property(0);
+}
+
+// BUFGMUX, BUFGMUX_1 and BUFGMUX_CTRL on a BUFGCTRL, as Vivado builds them:
+// BUFGMUX and BUFGMUX_1 switch on the clock enables (CE1 = S, CE0 = S through
+// the site inverter, S0 = S1 = 1), BUFGMUX_CTRL on the selects (S1 = S, S0 = S
+// inverted, CE0 = CE1 = 1). IGNORE0/IGNORE1 are low, or high with CLK_SEL_TYPE
+// "ASYNC". BUFGMUX_1 idles high (INIT_OUT).
+void XC7Packer::bufgmux_to_bufgctrl(CellInfo *ci)
+{
+    const std::string type = ci->type.str(ctx);
+    for (IdString port : {id_I0, id_I1, id_S}) {
+        const bool port_has_no_net = ci->getPort(port) == nullptr;
+        if (port_has_no_net)
+            log_error("%s '%s': port %s is not connected\n", type.c_str(), ci->name.c_str(ctx), port.c_str(ctx));
+    }
+    IdString clk_sel_type = ctx->id("CLK_SEL_TYPE");
+    const std::string sel = str_or_default(ci->params, clk_sel_type, "SYNC");
+    const bool sel_is_async = sel == "ASYNC";
+    const bool sel_is_unknown = !sel_is_async && sel != "SYNC";
+    if (sel_is_unknown)
+        log_error("%s '%s': CLK_SEL_TYPE must be \"SYNC\" or \"ASYNC\", not \"%s\"\n", type.c_str(),
+                  ci->name.c_str(ctx), sel.c_str());
+    ci->params.erase(clk_sel_type);
+
+    NetInfo *s = ci->getPort(id_S);
+    ci->type = id_BUFGCTRL;
+    const bool switches_on_selects = type == "BUFGMUX_CTRL";
+    if (switches_on_selects) {
+        ci->renamePort(id_S, id_S1);
+        ci->addInput(id_S0);
+        ci->connectPort(id_S0, s);
+        ci->params[id_IS_S0_INVERTED] = Property(1);
+        tie_port(ci, "CE0", true, true);
+        tie_port(ci, "CE1", true, true);
+    } else {
+        ci->renamePort(id_S, id_CE1);
+        ci->addInput(id_CE0);
+        ci->connectPort(id_CE0, s);
+        ci->params[id_IS_CE0_INVERTED] = Property(1);
+        tie_port(ci, "S0", true, true);
+        tie_port(ci, "S1", true, true);
+    }
+    tie_port(ci, "IGNORE0", sel_is_async, true);
+    tie_port(ci, "IGNORE1", sel_is_async, true);
+    const bool idles_high = type == "BUFGMUX_1";
+    if (idles_high)
+        ci->params[id_INIT_OUT] = Property(1);
+}
+
 void XC7Packer::prepare_clocking()
 {
     log_info("Preparing clocking...\n");
@@ -222,14 +280,16 @@ void XC7Packer::prepare_clocking()
             tie_port(ci, "CE0", true, true);
             tie_port(ci, "S0", true, true);
             tie_port(ci, "S1", false, true);
-            tie_port(ci, "IGNORE0", true, true);
+            tie_port(ci, "IGNORE0", false, true);
+            bufgs_ignoring_i1.push_back(ci);
         } else if (ci->type == id_BUFGCE) {
             ci->type = id_BUFGCTRL;
             ci->renamePort(id_I, id_I0);
             ci->renamePort(id_CE, id_CE0);
             tie_port(ci, "S0", true, true);
             tie_port(ci, "S1", false, true);
-            tie_port(ci, "IGNORE0", true, true);
+            tie_port(ci, "IGNORE0", false, true);
+            bufgs_ignoring_i1.push_back(ci);
         } else if (is_horizontal_clock_buffer) {
             // BUFH is the legacy non-CE spelling; both map to the BUFHCE bel
             // with CE tied active (port of nextpnr-xilinx pack_clocking_xc7.cc)
@@ -248,6 +308,13 @@ void XC7Packer::prepare_clocking()
             // and the run dies with "no Bels remaining of type 'BUFIO'" while
             // the BUFIO_BUFIO sites sit unused.  (Port of nextpnr-xilinx #157.)
             ci->type = id_BUFIO_BUFIO;
+        } else {
+            // The BUFGMUX names have no constid: compare the string, as a
+            // ctx->id() here would intern them for every design.
+            const std::string &type = ci->type.str(ctx);
+            const bool is_bufgmux = type == "BUFGMUX" || type == "BUFGMUX_1" || type == "BUFGMUX_CTRL";
+            if (is_bufgmux)
+                bufgmux_to_bufgctrl(ci);
         }
     }
 }

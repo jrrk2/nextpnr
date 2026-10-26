@@ -35,14 +35,15 @@ permissions:
 
 env:
   # The database the chipdbs are generated from, and the demo-projects commit
-  # carrying the cases.  Pinned, because the chipdb decides what the cases do.
-  PRJXRAY_DB_REV: b12466df16ecb6fe194fe436ec020ac08d32d61e
-  DEMO_PROJECTS_REV: e7429b5635ff77de9452aa31aef2462285691397
+  # carrying the cases.  Fixed revisions, because the chipdb decides what the
+  # cases do.
+  PRJXRAY_DB_REV: a8fd3f462b6af16775babe5f938d257fc7e2a097
+  DEMO_PROJECTS_REV: 0b1ed03a5757abf7086efd474adeff0b5cfc2ad8
 
 jobs:
   regression:
     name: xc7 FASM regression cases
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Check out this tree
@@ -114,17 +115,29 @@ jobs:
           # the step dying with exit 127 before any case runs.
           export PATH="$PWD/run/bin:$PATH"
           command -v nextpnr-xilinx
+          # The last ten cases have their fix merged:
+          # #66 (dsp-const-only-pins), #116 (pll-bufg-feedback,
+          # odelay-plain-outbuf), #119 (bram-tdp-byte-enables), #124
+          # (bram-output-register), #129 (dsp-autoreset-patdet), #130
+          # (bram-output-register-clock), #132 (bufgmux) and #131 + #134
+          # (ibufds-gte2-odiv2-bufgce, ibufds-gte2-shared-mgtclkout).
           demo-projects/regression/run.sh \
             clock-srcc-bufg bram-sdp-unused-port bufg-fabric-driven \
             config-primitive-startupe2 iddr-four-iff-flops \
             fdse-fdpe-undefined-init lutram-ram64x1s lutram-clkinv \
             lut_shared_pin const-holdout \
             srl-init xorigport-unknown-name srl-wemux dup-package-pin \
-            bufio-in-use bufr-pad-site bufr-sink-region bufh-clock-constraint
+            bufio-in-use bufr-pad-site bufr-sink-region bufh-clock-constraint \
+            pll-bufg-feedback odelay-plain-outbuf \
+            bram-tdp-byte-enables bram-output-register bram-output-register-clock \
+            dsp-autoreset-patdet bufgmux \
+            ibufds-gte2-odiv2-bufgce ibufds-gte2-shared-mgtclkout \
+            dsp-const-only-pins
 
-      # Failing today, on purpose and by name.  Each is a nextpnr-xilinx fix
-      # that the port has not reached; when one is fixed, move it into the
-      # blocking list above rather than deleting the note.
+      # Failing today, on purpose and by name.  These three cases are a gap of
+      # this engine alone, with no counterpart in the fork; PR #56 is still open.
+      # When one is fixed, move it into the blocking list above rather than
+      # deleting the note.
       - name: Run the cases whose fixes are still outstanding (non-blocking)
         continue-on-error: true
         env:
@@ -133,5 +146,13 @@ jobs:
         run: |
           set -uo pipefail
           export PATH="$PWD/run/bin:$PATH"
-          echo "dsp-const-only-pins #159: unported in nextpnr-xilinx too (PR #159 open)"
-          demo-projects/regression/run.sh dsp-const-only-pins
+          # The three #56 cases are a gap of this engine, not of the port: RAM32X1S and
+          # RAM32X2S are listed in dram_types with no packing branch, so all three stop
+          # today with "no BELs remaining to implement cell type".  PR #56 adds the two
+          # branches; the placement rule that lets several RAM32X1S share a SLICEM is the
+          # patch posted on that PR (openXC7/nextpnr#56), on top of it.
+          echo "lutram-ram32x1s #56: no packing branch for RAM32X1S (PR #56 open)"
+          echo "lutram-ram32x2s #56: no packing branch for RAM32X2S (PR #56 open)"
+          echo "lutram-ram32x1s-x4 #56: same gap today; the multi-cell placement is the patch posted on PR #56"
+          demo-projects/regression/run.sh lutram-ram32x1s lutram-ram32x2s \
+            lutram-ram32x1s-x4

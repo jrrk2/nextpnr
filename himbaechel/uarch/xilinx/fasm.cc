@@ -2196,8 +2196,12 @@ struct FasmBackend
                 push(stringf("BUFGCTRL.BUFGCTRL_X%dY%d", xy.x, xy.y));
                 write_bit("IN_USE");
                 write_bit("INIT_OUT", bool_or_default(ci->params, id_INIT_OUT));
-                write_bit("IS_IGNORE0_INVERTED", bool_or_default(ci->params, id_IS_IGNORE0_INVERTED));
-                write_bit("IS_IGNORE1_INVERTED", bool_or_default(ci->params, id_IS_IGNORE1_INVERTED));
+                // Set for the true polarity of the pin, like the ZINV_* bits:
+                // prjxray named them after the parameter its fuzzer varied
+                // with IGNORE left at ground. Vivado sets the bit for a signal
+                // that is not inverted and for IGNORE tied high.
+                write_bit("IS_IGNORE0_INVERTED", !bool_or_default(ci->params, id_IS_IGNORE0_INVERTED));
+                write_bit("IS_IGNORE1_INVERTED", !bool_or_default(ci->params, id_IS_IGNORE1_INVERTED));
                 write_bit("ZINV_CE0", !bool_or_default(ci->params, id_IS_CE0_INVERTED));
                 write_bit("ZINV_CE1", !bool_or_default(ci->params, id_IS_CE1_INVERTED));
                 write_bit("ZINV_S0", !bool_or_default(ci->params, id_IS_S0_INVERTED));
