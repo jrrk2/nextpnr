@@ -372,6 +372,14 @@ void XilinxImpl::fixup_hold()
         return;
     }
 
+    // createNet also records the name in net_aliases; erasing only the net would leave the alias behind, and the next buffer
+    // given the same name (the count only moves on for the buffers that stay) would trip createNet's assertion.
+    auto erase_net = [this](NetInfo *net) {
+        const IdString name = net->name;
+        ctx->nets.erase(name);
+        ctx->net_aliases.erase(name);
+    };
+
     int total_buffers = 0, total_detours = 0;
     for (int pass = 0; pass < max_passes; pass++) {
         const auto &violations = ctx->timing_result.min_delay_violations;
@@ -507,7 +515,7 @@ void XilinxImpl::fixup_hold()
                 buf->disconnectPort(id_A1);
                 buf->disconnectPort(id_O6);
                 ctx->cells.erase(buf->name);
-                ctx->nets.erase(buf_out->name);
+                erase_net(buf_out);
                 no_exit++;
                 continue;
             }
@@ -551,7 +559,7 @@ void XilinxImpl::fixup_hold()
                 }
                 ctx->cells.erase(p.buf->name);
                 if (buf_out)
-                    ctx->nets.erase(buf_out->name);
+                    erase_net(buf_out);
                 // The net is as it was, so it is not one of the touched: a
                 // net whose buffer never landed must not be ripped up.
                 const bool the_sink_was_reconnected_to_a_net = (orig != nullptr);
